@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (c) 2016 Tino Reichardt
  * All rights reserved.
  *
@@ -24,12 +24,12 @@
 #ifdef WINVER
 #  undef WINVER
 #endif
-#define WINVER       0x0600
+#define WINVER       0x0501    /* Support Windows XP (0x0501) */
 
 #ifdef _WIN32_WINNT
 #  undef _WIN32_WINNT
 #endif
-#define _WIN32_WINNT 0x0600
+#define _WIN32_WINNT 0x0501    /* Support Windows XP (0x0501) */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #  define WIN32_LEAN_AND_MEAN
@@ -49,12 +49,31 @@
 #define ZSTD_pthread_mutex_unlock(a)   LeaveCriticalSection((a))
 
 /* condition variable */
+#if (_WIN32_WINNT >= 0x0600)  /* Vista+ has native condition variables */
 #define ZSTD_pthread_cond_t             CONDITION_VARIABLE
 #define ZSTD_pthread_cond_init(a, b)    ((void)(b), InitializeConditionVariable((a)), 0)
 #define ZSTD_pthread_cond_destroy(a)    ((void)(a))
 #define ZSTD_pthread_cond_wait(a, b)    SleepConditionVariableCS((a), (b), INFINITE)
 #define ZSTD_pthread_cond_signal(a)     WakeConditionVariable((a))
 #define ZSTD_pthread_cond_broadcast(a)  WakeAllConditionVariable((a))
+#else
+/* Windows XP-compatible condition variable implementation */
+typedef struct {
+    HANDLE waiters_count_lock;
+    HANDLE signal_event;
+    HANDLE broadcast_event;
+    size_t waiters_count;
+    size_t was_broadcast;
+} win32_cond_t;
+
+typedef win32_cond_t ZSTD_pthread_cond_t;
+
+int ZSTD_pthread_cond_init(ZSTD_pthread_cond_t* cond, const void* unused);
+int ZSTD_pthread_cond_destroy(ZSTD_pthread_cond_t* cond);
+int ZSTD_pthread_cond_wait(ZSTD_pthread_cond_t* cond, ZSTD_pthread_mutex_t* mutex);
+int ZSTD_pthread_cond_signal(ZSTD_pthread_cond_t* cond);
+int ZSTD_pthread_cond_broadcast(ZSTD_pthread_cond_t* cond);
+#endif
 
 /* ZSTD_pthread_create() and ZSTD_pthread_join() */
 typedef HANDLE ZSTD_pthread_t;

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (c) 2016 Tino Reichardt
  * All rights reserved.
  *
@@ -33,6 +33,228 @@ int g_ZSTD_threading_useless_symbol;
 
 
 /* ===  Implementation  === */
+
+#if (_WIN32_WINNT < 0x0600) 
+/* Windows XP-compatible condition variable implementation */
+int ZSTD_pthread_cond_init(ZSTD_pthread_cond_t* cond, const void* unused)
+{
+	(void)unused;
+	if (NULL == cond)
+	{
+		return EINVAL;
+	}
+	
+	DWORD error = 0;
+	cond->waiters_count = 0;
+	cond->was_broadcast = 0;
+	cond->waiters_count_lock = NULL;
+	cond->signal_event = NULL;
+	cond->broadcast_event = NULL;
+	
+	if (NULL == (cond->waiters_count_lock = CreateMutex(NULL, FALSE, NULL))) 
+	{
+		error = GetLastError();
+		return (int)error;
+	}
+	
+	if (NULL == (cond->signal_event = CreateEvent(NULL, FALSE, FALSE, NULL))) 
+	{
+		error = GetLastError();
+		CloseHandle(cond->waiters_count_lock);
+		cond->waiters_count_lock = NULL;
+		return (int)error;
+	}
+	
+	if (NULL == (cond->broadcast_event = CreateEvent(NULL, TRUE, FALSE, NULL))) 
+	{
+		error = GetLastError();
+		CloseHandle(cond->waiters_count_lock);
+		CloseHandle(cond->signal_event);
+		cond->waiters_count_lock = NULL;
+		cond->signal_event = NULL;
+		return (int)error;
+	}
+	
+	return 0;
+}
+
+int ZSTD_pthread_cond_destroy(ZSTD_pthread_cond_t* cond)
+{
+	if (NULL == cond)
+	{
+		return EINVAL;
+	}
+
+	DWORD first_error = 0;
+
+	if (NULL != cond->waiters_count_lock) 
+	{
+		if (!CloseHandle(cond->waiters_count_lock)) 
+		{
+			if (0 == first_error)
+			{
+				first_error = GetLastError();
+			}
+		}
+		cond->waiters_count_lock = NULL;
+	}
+	
+	if (NULL != cond->signal_event) 
+	{
+		if (!CloseHandle(cond->signal_event)) 
+		{
+			if (0 == first_error)
+			{
+				first_error = GetLastError();
+			}
+		}
+		cond->signal_event = NULL;
+	}
+	
+	if (NULL != cond->broadcast_event) 
+	{
+		if (!CloseHandle(cond->broadcast_event)) 
+		{
+			if (0 == first_error)
+			{
+				first_error = GetLastError();
+			}
+		}
+		cond->broadcast_event = NULL;
+	}
+
+	cond->waiters_count = 0;
+	cond->was_broadcast = 0;
+
+	return (int)first_error;
+}
+
+int ZSTD_pthread_cond_wait(ZSTD_pthread_cond_t* cond, ZSTD_pthread_mutex_t* mutex)
+{
+	if (NULL == cond || NULL == mutex)
+	{
+		return EINVAL;
+	}    
+	
+	DWORD result = 0;
+	
+	if (WAIT_FAILED == WaitForSingleObject(cond->waiters_count_lock, INFINITE))
+	{
+		return (int)GetLastError();
+	}
+		
+	cond->waiters_count++;
+	
+	if (!ReleaseMutex(cond->waiters_count_lock)) 
+	{
+		result = GetLastError();
+		cond->waiters_count--;
+		return (int)result;
+	}
+	
+	ZSTD_pthread_mutex_unlock(mutex);
+	
+	HANDLE events[2] = { cond->signal_event, cond->broadcast_event };
+	DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
+	
+	if (WAIT_FAILED == WaitForSingleObject(cond->waiters_count_lock, INFINITE))
+	{
+		result = GetLastError();
+		ZSTD_pthread_mutex_lock(mutex);
+		return (int)result;
+	}
+
+	cond->waiters_count--;
+	size_t was_broadcast = cond->was_broadcast;    
+	if (was_broadcast && 0 == cond->waiters_count) 
+	{
+		if (!ResetEvent(cond->broadcast_event))
+		{
+			result = GetLastError();
+		}
+		cond->was_broadcast = 0;
+	}
+
+	if (!ReleaseMutex(cond->waiters_count_lock) && 0 == result)
+	{
+		result = GetLastError();
+		cond->waiters_count++;
+	}
+	
+	ZSTD_pthread_mutex_lock(mutex);
+	
+	if (0 != result)
+	{
+		return (int)result;
+	}
+	
+	return (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_OBJECT_0 + 1) ? 0 : (int)GetLastError();
+}
+
+int ZSTD_pthread_cond_signal(ZSTD_pthread_cond_t* cond)
+{
+	if (NULL == cond)
+	{
+		return EINVAL;
+	}
+
+	if (WAIT_FAILED == WaitForSingleObject(cond->waiters_count_lock, INFINITE))
+	{
+		return (int)GetLastError();
+	}
+		
+	int have_waiters = cond->waiters_count > 0;
+	if (!ReleaseMutex(cond->waiters_count_lock)) 
+	{
+		return (int)GetLastError();
+	}
+	
+	if (have_waiters)
+	{
+		if (!SetEvent(cond->signal_event))
+		{
+			return (int)GetLastError();
+		}
+	}
+	
+	return 0;
+}
+
+int ZSTD_pthread_cond_broadcast(ZSTD_pthread_cond_t* cond)
+{
+	if (NULL == cond)
+	{
+		return EINVAL;
+	}
+	
+	if (WAIT_FAILED == WaitForSingleObject(cond->waiters_count_lock, INFINITE))
+	{
+		return (int)GetLastError();
+	}
+	
+	int have_waiters = 0;
+	if (cond->waiters_count > 0) 
+	{
+		cond->was_broadcast = 1;
+		have_waiters = 1;
+	}
+	
+	if (!ReleaseMutex(cond->waiters_count_lock)) 
+	{
+		return (int)GetLastError();
+	}
+	
+	if (have_waiters) 
+	{
+		if (!SetEvent(cond->broadcast_event))
+		{
+			return (int)GetLastError();
+		}
+	}
+	
+	return 0;
+}
+#endif /* Windows XP-compatible condition variable implementation */
 
 typedef struct {
     void* (*start_routine)(void*);

@@ -1,3 +1,46 @@
+[阅读中文版本 (Read Chinese Version)](README_CN.md)
+
+---
+
+# Zstandard (zstd) - Windows XP Compatibility Fork
+
+## About This Fork
+
+**This project is a fork of the official [facebook/zstd](https://github.com/facebook/zstd) repository, aiming to add Windows XP compatibility to zstd's multithreading feature.**
+
+Since the official stance in [Issue #932](https://github.com/facebook/zstd/issues/932) indicates that official compatibility support for Windows XP will not be provided, this fork was created to meet related needs.
+
+## Main Changes: Windows XP Multithreading Compatibility
+
+The core modification in this fork enables the zstd library with multithreading support (`ZSTD_MULTITHREAD`) to compile and run correctly on Windows XP systems. Newer versions of the original zstd rely on native Condition Variables available only in Windows Vista and later, which are absent in Windows XP.
+
+This fork addresses the compatibility issue through the following methods:
+
+*   **Target Platform Setting:** In `lib/common/threading.h`, `WINVER` and `_WIN32_WINNT` are explicitly set to `0x0501` for the Windows platform to ensure the use of XP-compatible APIs.
+*   **Simulated Condition Variables:** In `lib/common/threading.c`, the wait, signal, and broadcast behaviors of condition variables are simulated using standard synchronization primitives supported by Windows XP—**Mutex** and **Event**—providing a Pthreads-compatible interface.
+
+With these modifications, the multithreaded zstd library built using this fork should theoretically run in Windows XP SP2/SP3 environments.
+
+## Building
+
+The build steps are largely the same as the original zstd project. Please refer to the official build documentation:
+[https://github.com/facebook/zstd/tree/dev/build](https://github.com/facebook/zstd/tree/dev/build)
+
+**Special Note for Windows XP:**
+When building on Windows, ensure your development environment (compiler, linker, Windows SDK) is configured to target Windows XP. For example, select an XP-compatible platform toolset in Visual Studio (like `v141_xp`), or add appropriate target platform compilation options when using MinGW/Clang. The code changes in this fork address API-level compatibility, but the final executable still relies on the correct toolchain setup to be compatible with the XP runtime.
+
+## License
+
+This fork inherits the original license of zstd. This project is released under the dual BSD and GPLv2 licenses. For details, please refer to the [LICENSE](LICENSE) and [COPYING](COPYING) files.
+
+## Disclaimer
+
+Windows XP is an End-of-Life (EOL) operating system for which Microsoft no longer provides security updates or technical support. Running any software (including this modified version of zstd) on Windows XP carries inherent security risks.
+
+This fork is provided "as is" to meet specific legacy system compatibility requirements. Users assume all risks associated with its use. It is recommended to use this only in special circumstances where upgrading the operating system is not feasible.
+
+---
+
 <p align="center"><img src="https://raw.githubusercontent.com/facebook/zstd/dev/doc/images/zstd_logo86.png" alt="Zstandard"></p>
 
 __Zstandard__, or `zstd` as short version, is a fast lossless compression algorithm,
